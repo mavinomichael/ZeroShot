@@ -8,16 +8,16 @@ from GroundingDINO.groundingdino.util.inference import load_model, load_image, p
 app = FastAPI()
 headers = {'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:91.0) Gecko/20100101 Firefox/91.0'}
 
-HOME = os.getcwd()
-print(HOME)
+# Get the base directory where the script is located
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # specify config path
-CONFIG_PATH = os.path.join(HOME, "GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py")
+CONFIG_PATH = os.path.join(BASE_DIR, "GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py")
 print(CONFIG_PATH, "; exist:", os.path.isfile(CONFIG_PATH))
 
 # specify weight path
 WEIGHTS_NAME = "groundingdino_swint_ogc.pth"
-WEIGHTS_PATH = os.path.join(HOME, "weights", WEIGHTS_NAME)
+WEIGHTS_PATH = os.path.join(BASE_DIR, "weights", WEIGHTS_NAME)
 print(WEIGHTS_PATH, "; exist:", os.path.isfile(WEIGHTS_PATH))
 
 # load model
@@ -37,7 +37,7 @@ TEXT_TRESHOLD = 0.25
 @app.get("/process-frame/{url}")
 async def process_frame(url: str):
     detections = []
-    image_path = os.path.join(HOME, download_image(url, FILE_NAME, FOLDER))
+    image_path = os.path.join(BASE_DIR, download_image(url, FILE_NAME, FOLDER))
     if not image_path is None:
         image_source, image = load_image(image_path)
 
@@ -97,3 +97,4 @@ def download_image(url, filename, folder):
     else:
         print(f"Failed to download image from URL: {url}")
         return None
+
