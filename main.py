@@ -1,5 +1,11 @@
 import os
+import uuid
+from typing import List, Dict, Any, Union
+from torchvision.ops import box_convert
+import io
 import boto3
+import cv2
+import numpy as np
 import supervision as sv
 import torch
 from fastapi import FastAPI
@@ -65,65 +71,7 @@ async def process_frame(url: str):
     detections = []
     image_path = download_image(url, FILE_NAME, FOLDER)
     logger.info("Processing image: %s", image_path)
-    if not image_path is None:
-        image_source, image = load_image(image_path)
-
-        # perform inference
-        boxes, logits, phrases = predict(
-            model=model,
-            image=image,
-            caption=TEXT_PROMPT,
-            box_threshold=BOX_TRESHOLD,
-            text_threshold=TEXT_TRESHOLD
-        )
-
-        print(boxes, logits, phrases)
-
-        for box, logit, phrase in zip(boxes, logits, phrases):
-            label = phrase
-            left, top, width, height = box
-
-            right = left + width
-            bottom = top + height
-
-            try:
-                url = crop_and_save_image(
-                    image_path=image_path,
-                    box=box, bucket=BUCKET_NAME,
-                    label=label)
-
-                detection = {
-                    "label": label,
-                    "url": url,
-                    "bounding_box": {
-                        "left": left.item(),
-                        "right": right.item(),
-                        "top": top.item(),
-                        "bottom": bottom.item()
-                    }
-                }
-
-                detections.append(detection)
-
-                print("Label: ", label)
-                print("Url: ", url)
-                print("Bounding Box Left: ", left)
-                print("Bounding Box Right: ", right)
-                print("Bounding Box Top: ", top)
-                print("Bounding Box Bottom: ", bottom)
-                print()
-
-            except Exception as e:
-                logger.error(e)
-                return {
-                    "statusCode": 500,
-                    "header": "application/json",
-                    "body": {
-                        "message": "An error occurred while processing the frame."
-                    }
-                }
-
-    else:
+    if not image_path:
         return {
             "statusCode": 400,
             "header": "application/json",
@@ -131,6 +79,19 @@ async def process_frame(url: str):
                 "message": "The image could not be downloaded."
             }
         }
+
+    image_source, image = load_image(image_path)
+
+    # Perform inference
+    boxes, logits, phrases = predict(
+        model=model,
+        image=image,
+        caption=TEXT_PROMPT,
+        box_threshold=BOX_TRESHOLD,
+        text_threshold=TEXT_TRESHOLD
+    )
+
+    detections = annotate_and_crop(image_source, boxes, logits, phrases)
 
     return {
         "statusCode": 200,
@@ -153,34 +114,70 @@ def download_image(url, filename, folder):
         return None
 
 
-def crop_and_save_image(image_path: str, box: torch.Tensor, bucket: str, label: str) -> str:
-    """Crops and saves each bounding box image out of the frame and returns the S3 URL of the cropped image."""
-    h, w, _ = image_path.shape
+def annotate_and_crop(image_source: np.ndarray, boxes: torch.Tensor, logits: torch.Tensor, phrases: List[str]) -> List[Dict[str, Union[Dict[str, Any], str, Any]]]:
+    h, w, _ = image_source.shape
+    boxes = boxes * torch.Tensor([w, h, w, h])
+    xyxy = box_convert(boxes=boxes, in_fmt="cxcywh", out_fmt="xyxy").numpy()
 
-    boxes = convert_to_xyxy(boxes=box)
-    left, top, right, bottom = boxes
-    cropped_image = image_path[top:bottom, left:right]
+    annotated_frame = annotate(image_source=image_source, boxes=boxes, logits=logits, phrases=phrases)
+    annotated_url = upload_to_s3(f"{str(uuid.uuid4())}_annotated", BUCKET_NAME, annotated_frame)
 
-    file_name = f"{label}_{left}_{top}_{right}_{bottom}.jpg"
+    detections = []
+    for box, logit, phrase in zip(xyxy, logits, phrases):
+        xmin, ymin, xmax, ymax = box
+
+        # Convert the bounding box coordinates to integers
+        xmin, ymin, xmax, ymax = int(xmin), int(ymin), int(xmax), int(ymax)
+
+        image_source = cv2.cvtColor(image_source, cv2.COLOR_RGB2BGR)
+
+        cropped_image = image_source[ymin:ymax, xmin:xmax]
+
+        # do not touch code above
+
+        if cropped_image.size != 0:
+            url = upload_to_s3(f"{phrase}_{str(uuid.uuid4())}", BUCKET_NAME, cropped_image)
+
+            # Convert the bounding box coordinates to percentages
+            left = xmin / w
+            top = ymin / h
+            width = (xmax - xmin) / w
+            height = (ymax - ymin) / h
+
+            # create detection obj
+            detection = {
+                "label": phrase,
+                "confidence": logit,
+                "annotated_url": annotated_url,
+                "url": url,
+                "bounding_box": {
+                    "left": left,
+                    "top": top,
+                    "width": width,
+                    "height": height,
+                }
+            }
+            detections.append(detection)
+
+    return detections
+
+
+def upload_to_s3(label: str, bucket: str, cropped_image: np.ndarray) -> str:
+    file_name = f"{label}.jpg"
     try:
         session = boto3.Session(
             aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-            aws_session_token=os.getenv("AWS_SESSION_TOKEN")
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY")
         )
         s3 = session.resource('s3')
-        s3.Object(bucket, file_name).put(Body=cropped_image)
+
+        # Convert cropped_image to bytes before uploading to S3
+        _, image_bytes = cv2.imencode(".jpg", cropped_image)
+        byte_stream = io.BytesIO(image_bytes.tobytes())
+
+        s3.Object(bucket, file_name).put(Body=byte_stream)
     except Exception as e:
         raise Exception(f"Failed to upload image to S3: {file_name} with error: {e}")
 
-    url = f"https://s3.amazonaws.com/{bucket}/{file_name}"
+    url = f"https://{bucket}.s3.us-east-2.amazonaws.com/{file_name}"
     return url
-
-
-def convert_to_xyxy(boxes: torch.Tensor) -> torch.Tensor:
-    """Converts bounding boxes from the "cxcywh" format to the "xyxy" format."""
-    h, w, _ = boxes.shape
-    boxes = boxes * torch.Tensor([w, h, w, h])
-    xyxy = torch.stack([boxes[:, :2], boxes[:, 2:] + boxes[:, :2]], dim=1)
-    return xyxy
-
