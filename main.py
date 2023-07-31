@@ -1,4 +1,5 @@
 import os
+import boto3
 import supervision as sv
 from fastapi import FastAPI
 import requests
@@ -33,6 +34,9 @@ model = load_model(CONFIG_PATH, WEIGHTS_PATH)
 FILE_NAME = "frame.jpg"
 FOLDER = "data"
 
+# s3 bucket name
+BUCKET_NAME = "ai-engine-cropped-image-bucket"
+
 # specify classes or prompt
 TEXT_PROMPT = "chair, shirt, trousers, pants, skirt, hoodie, sweatpants, suit, blouse, shoes, glasses, car, cap, " \
               "beanie, wristwatch, jewelry, bag, furniture, table, plate, computer, phone"
@@ -58,7 +62,7 @@ async def process_test(url: str):
 @app.get("/process-frame/")
 async def process_frame(url: str):
     detections = []
-    image_path = os.path.join(HOME, download_image(url, FILE_NAME, FOLDER))
+    image_path = download_image(url, FILE_NAME, FOLDER)
     logger.info("Processing image: %s", image_path)
     if not image_path is None:
         image_source, image = load_image(image_path)
@@ -81,24 +85,51 @@ async def process_frame(url: str):
             right = left + width
             bottom = top + height
 
-            detection = {
-                "label": label,
-                "bounding_box": {
-                    "left": left.item(),
-                    "right": right.item(),
-                    "top": top.item(),
-                    "bottom": bottom.item()
+            try:
+                url = crop_and_save_image(
+                    image_path=image_path,
+                    box=box, bucket=BUCKET_NAME,
+                    label=label)
+
+                detection = {
+                    "label": label,
+                    "url": url,
+                    "bounding_box": {
+                        "left": left.item(),
+                        "right": right.item(),
+                        "top": top.item(),
+                        "bottom": bottom.item()
+                    }
                 }
+
+                detections.append(detection)
+
+                print("Label: ", label)
+                print("Url: ", url)
+                print("Bounding Box Left: ", left)
+                print("Bounding Box Right: ", right)
+                print("Bounding Box Top: ", top)
+                print("Bounding Box Bottom: ", bottom)
+                print()
+
+            except Exception as e:
+                logger.error(e)
+                return {
+                    "statusCode": 500,
+                    "header": "application/json",
+                    "body": {
+                        "message": "An error occurred while processing the frame."
+                    }
+                }
+
+    else:
+        return {
+            "statusCode": 400,
+            "header": "application/json",
+            "body": {
+                "message": "The image could not be downloaded."
             }
-
-            detections.append(detection)
-
-            print("Label: ", label)
-            print("Bounding Box Left: ", left)
-            print("Bounding Box Right: ", right)
-            print("Bounding Box Top: ", top)
-            print("Bounding Box Bottom: ", bottom)
-            print()
+        }
 
     return {
         "statusCode": 200,
@@ -119,3 +150,36 @@ def download_image(url, filename, folder):
     else:
         print(f"Failed to download image from URL: {url}")
         return None
+
+
+def crop_and_save_image(image_path: str, box: torch.Tensor, bucket: str, label: str) -> str:
+    """Crops and saves each bounding box image out of the frame and returns the S3 URL of the cropped image."""
+    h, w, _ = image_path.shape
+
+    boxes = convert_to_xyxy(boxes=box)
+    left, top, right, bottom = boxes
+    cropped_image = image_path[top:bottom, left:right]
+
+    file_name = f"{label}_{left}_{top}_{right}_{bottom}.jpg"
+    try:
+        session = boto3.Session(
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+            aws_session_token=os.getenv("AWS_SESSION_TOKEN")
+        )
+        s3 = session.resource('s3')
+        s3.Object(bucket, file_name).put(Body=cropped_image)
+    except Exception as e:
+        raise Exception(f"Failed to upload image to S3: {file_name} with error: {e}")
+
+    url = f"https://s3.amazonaws.com/{bucket}/{file_name}"
+    return url
+
+
+def convert_to_xyxy(boxes: torch.Tensor) -> torch.Tensor:
+    """Converts bounding boxes from the "cxcywh" format to the "xyxy" format."""
+    h, w, _ = boxes.shape
+    boxes = boxes * torch.Tensor([w, h, w, h])
+    xyxy = torch.stack([boxes[:, :2], boxes[:, 2:] + boxes[:, :2]], dim=1)
+    return xyxy
+
