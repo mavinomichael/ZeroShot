@@ -1,6 +1,7 @@
 import os
 import boto3
 import supervision as sv
+import torch
 from fastapi import FastAPI
 import requests
 import logging
