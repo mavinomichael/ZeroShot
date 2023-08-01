@@ -1,6 +1,8 @@
 import os
 import uuid
 from typing import List, Dict, Any, Union
+
+from PIL import Image
 from torchvision.ops import box_convert
 import io
 import boto3
@@ -114,13 +116,19 @@ def download_image(url, filename, folder):
         return None
 
 
-def annotate_and_crop(image_source: np.ndarray, boxes: torch.Tensor, logits: torch.Tensor, phrases: List[str]) -> List[Dict[str, Union[Dict[str, Any], str, Any]]]:
+def annotate_and_crop(image_source: np.ndarray, boxes: torch.Tensor, logits: torch.Tensor, phrases: List[str]) -> List[
+    Dict[str, Union[Dict[str, Any], str, Any]]]:
     h, w, _ = image_source.shape
     boxes = boxes * torch.Tensor([w, h, w, h])
     xyxy = box_convert(boxes=boxes, in_fmt="cxcywh", out_fmt="xyxy").numpy()
 
-    annotated_frame = annotate(image_source=image_source, boxes=boxes, logits=logits, phrases=phrases)
-    annotated_url = upload_to_s3(f"{str(uuid.uuid4())}_annotated", BUCKET_NAME, annotated_frame)
+    # annotated_frame = annotate(image_source=image_source, boxes=boxes, logits=logits, phrases=phrases)
+    # annotated_file_path = os.path.join(FOLDER, "annotated.jpg")
+    # cv2.imwrite(annotated_file_path, annotated_frame)
+    #
+    # annotated_url = upload_annotated_frame_to_s3(f"{str(uuid.uuid4())}_annotated", BUCKET_NAME, annotated_frame)
+
+    image_source = cv2.cvtColor(image_source, cv2.COLOR_RGB2BGR)
 
     detections = []
     for box, logit, phrase in zip(xyxy, logits, phrases):
@@ -129,11 +137,7 @@ def annotate_and_crop(image_source: np.ndarray, boxes: torch.Tensor, logits: tor
         # Convert the bounding box coordinates to integers
         xmin, ymin, xmax, ymax = int(xmin), int(ymin), int(xmax), int(ymax)
 
-        image_source = cv2.cvtColor(image_source, cv2.COLOR_RGB2BGR)
-
         cropped_image = image_source[ymin:ymax, xmin:xmax]
-
-        # do not touch code above
 
         if cropped_image.size != 0:
             url = upload_to_s3(f"{phrase}_{str(uuid.uuid4())}", BUCKET_NAME, cropped_image)
@@ -147,8 +151,8 @@ def annotate_and_crop(image_source: np.ndarray, boxes: torch.Tensor, logits: tor
             # create detection obj
             detection = {
                 "label": phrase,
-                "confidence": logit,
-                "annotated_url": annotated_url,
+                "confidence": f"{logit:.2f}",
+                # "annotated_url": annotated_url,
                 "url": url,
                 "bounding_box": {
                     "left": left,
@@ -164,6 +168,7 @@ def annotate_and_crop(image_source: np.ndarray, boxes: torch.Tensor, logits: tor
 
 def upload_to_s3(label: str, bucket: str, cropped_image: np.ndarray) -> str:
     file_name = f"{label}.jpg"
+    print(file_name)
     try:
         session = boto3.Session(
             aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
@@ -171,13 +176,39 @@ def upload_to_s3(label: str, bucket: str, cropped_image: np.ndarray) -> str:
         )
         s3 = session.resource('s3')
 
-        # Convert cropped_image to bytes before uploading to S3
+        # Convert cropped_image to bytes
         _, image_bytes = cv2.imencode(".jpg", cropped_image)
         byte_stream = io.BytesIO(image_bytes.tobytes())
 
+        # Upload to s3
         s3.Object(bucket, file_name).put(Body=byte_stream)
     except Exception as e:
         raise Exception(f"Failed to upload image to S3: {file_name} with error: {e}")
 
     url = f"https://{bucket}.s3.us-east-2.amazonaws.com/{file_name}"
+    print(url)
+    return url
+
+
+def upload_annotated_frame_to_s3(label: str, bucket: str, annotated_image: np.ndarray) -> str:
+    file_name = f"{label}.jpg"
+    print(file_name)
+    try:
+        session = boto3.Session(
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY")
+        )
+        s3 = session.resource('s3')
+
+        # Convert cropped_image to bytes
+        _, image_bytes = cv2.imencode(".jpg", annotated_image)
+        byte_stream = io.BytesIO(image_bytes.tobytes())
+
+        # Upload to s3
+        s3.Object(bucket, file_name).put(Body=byte_stream)
+    except Exception as e:
+        raise Exception(f"Failed to upload image to S3: {file_name} with error: {e}")
+
+    url = f"https://{bucket}.s3.us-east-2.amazonaws.com/{file_name}"
+    print(url)
     return url
