@@ -46,12 +46,17 @@ FOLDER = "data"
 # s3 bucket name
 BUCKET_NAME = "ai-engine-cropped-image-bucket"
 
+# Short sleeve top, " \
+#               "long sleeve top, short sleeve outwear, long sleeve outwear, Vest, sling, Shorts, Trousers, Skirt, " \
+#               "short sleeve dress, long sleeve dress, vest dress, sling dress, shoe, Hat, glasses, tie, bag,
+# "couch, sofa, picture frame, bed, lamp, bar stool "
+
 # specify classes or prompt
-TEXT_PROMPT = "chair, shirt, trousers, pants, skirt, hoodie, sweatpants, suit, blouse, shoes, glasses, car, cap, " \
-              "beanie, wristwatch, jewelry, bag, furniture, table, plate, computer, phone, Short sleeve top, " \
-              "long sleeve top, short sleeve outwear, long sleeve outwear, Vest, sling, Shorts, Trousers, Skirt, " \
-              "short sleeve dress, long sleeve dress, vest dress, sling dress, shoe, Hat, glasses, tie, bag, " \
-              "couch, sofa, picture frame, bed, lamp, bar stool "
+TEXT_PROMPT = "chair, shirt, trousers, pants, skirt, hoodie, sweatpants, suit, blouse, shoes, glasses, car, cap," \
+              "beanie, wristwatch, jewelry, sweater, bag, furniture, table, plate, computer, phone" \
+              "couch, sofa, picture, bed, lamp, stool"
+
+
 BOX_TRESHOLD = 0.35
 TEXT_TRESHOLD = 0.25
 
@@ -73,7 +78,6 @@ async def process_test(url: str):
 
 @app.get("/process-frame/")
 async def process_frame(url: str):
-    detections = []
     image_path = download_image(url, FILE_NAME, FOLDER)
     logger.info("Processing image: %s", image_path)
     if not image_path:
