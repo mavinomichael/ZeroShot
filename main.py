@@ -49,9 +49,9 @@ BUCKET_NAME = "ai-engine-cropped-image-bucket"
 # specify classes or prompt
 TEXT_PROMPT = "chair, shirt, trousers, pants, skirt, hoodie, sweatpants, suit, blouse, shoes, glasses, car, cap, " \
               "beanie, wristwatch, jewelry, bag, furniture, table, plate, computer, phone, Short sleeve top, " \
-              "Long sleeve top, Short sleeve outwear, Long sleeve outwear, Vest, Sling, Shorts, Trousers, Skirt, " \
-              "Short sleeve dress, Long sleeve dress, Vest dress, Sling dress, Shoe, Hat, Glasses, Tie, Bag " \
-              ""
+              "long sleeve top, short sleeve outwear, long sleeve outwear, Vest, sling, Shorts, Trousers, Skirt, " \
+              "short sleeve dress, long sleeve dress, vest dress, sling dress, shoe, Hat, glasses, tie, bag, " \
+              "couch, sofa, picture frame, bed, lamp, bar stool "
 BOX_TRESHOLD = 0.35
 TEXT_TRESHOLD = 0.25
 
